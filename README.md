@@ -56,3 +56,21 @@ sobreposição para manter os textos legíveis. Fontes das fotos (Unsplash):
 Para executar, configure as variáveis de `.env.example`, instale com `npm ci` e
 rode `npm run dev`. O build de produção é validado com `npm run build`.
 A configuração Firebase herdada da base deve ser conferida antes de um deploy.
+
+### Telas de foco, perfil e tarefas
+
+- Foco: painel fotográfico, progresso circular, atalhos de 15/25/50 minutos e
+  controles de duração, início, pausa e reinício.
+- Perfil: faixa com imagem, resumo da conta, preferências agrupadas e exemplo
+  visual de lembrete com o horário salvo. A prévia é ilustrativa.
+- Tarefas: indicadores reais de abertas, concluídas e atrasadas, progresso,
+  busca por texto, filtros de estado e ordenação por prazo ou criação.
+
+Fotos adicionais (Unsplash):
+
+- Foco: https://images.unsplash.com/photo-1441974231531-c6227db76b6e
+- Perfil: https://images.unsplash.com/photo-1497366754035-f200968a6e72
+
+Validação visual com dados simulados em 1672, 1024 e 390 px: navegação, imagens,
+filtros, busca, ordenação, foco no formulário e controles do temporizador.
+O teste de gravação no Firebase requer as variáveis de ambiente e uma conta real.
