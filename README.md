@@ -39,3 +39,20 @@ O ZIP extraído não contém `.git`: `git add`, `git commit` e `git push` só fu
 ## Limites de validação
 
 `npm run build` valida o código e a geração dos arquivos estáticos. Para verificar login, sincronização, regras de acesso e entrega das notificações, é necessário configurar e publicar em um projeto Firebase. Nenhuma configuração de projeto veio com o ZIP original.
+
+## DescomplexVS2 — redesign
+
+Esta versão usa o Descomplex como base e preserva autenticação, Firestore, tarefas,
+diagnóstico, foco, perfil e notificações. O painel recebeu um banner fotográfico,
+cartões claros, imagem discreta no diagnóstico e ajustes para desktop e celular.
+Os totais e percentuais continuam vindo da conta autenticada.
+
+As fotos ficam em `public/images/`, são servidas pelo próprio app e usam uma
+sobreposição para manter os textos legíveis. Fontes das fotos (Unsplash):
+
+- Banner: https://images.unsplash.com/photo-1499951360447-b19be8fe80f5
+- Diagnóstico: https://images.unsplash.com/photo-1497215728101-856f4ea42174
+
+Para executar, configure as variáveis de `.env.example`, instale com `npm ci` e
+rode `npm run dev`. O build de produção é validado com `npm run build`.
+A configuração Firebase herdada da base deve ser conferida antes de um deploy.
