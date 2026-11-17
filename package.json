@@ -8,8 +8,10 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "deploy:site": "npm run build && npx netlify-cli deploy --prod",
-    "test:auth": "node --test tests/*.test.mjs",
-    "dev:full": "npx netlify-cli dev"
+    "test:auth": "node --test tests/google-auth.test.mjs",
+    "dev:full": "node scripts/dev-server.mjs",
+    "dev:netlify": "npx netlify-cli dev",
+    "test:dev": "node --test tests/dev-server.test.mjs"
   },
   "dependencies": {
     "firebase": "^10.8.0",

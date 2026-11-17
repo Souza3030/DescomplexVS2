@@ -56,11 +56,25 @@ npm ci
 npm run dev:full
 ```
 
-Abra `http://localhost:8888`. O comando usa Netlify CLI para servir Vite e Functions.
+Abra `http://localhost:8888`. O comando serve Vite e a mesma API de produção
+em um único servidor Node. Não depende do proxy do Netlify CLI nem da porta 5173.
 O domínio local também precisa estar autorizado no cliente OAuth Google.
+Variáveis definidas no PowerShell têm prioridade sobre `.env`; reinicie o servidor
+para aplicar alterações. Localmente, `FIREBASE_SERVICE_ACCOUNT_JSON` também aceita
+o caminho de um arquivo JSON privado, relativo à raiz do projeto. No Netlify,
+continue usando o conteúdo completo do JSON.
+
+Para testar especificamente o ambiente do Netlify CLI, use `npm run dev:netlify`.
+Se a porta 8888 estiver ocupada, encerre a execução anterior; para usar outra porta,
+execute `npm run dev:full -- --port 8890` e autorize essa origem no Google Cloud.
+
+Uma tela branca com erro MIME em `@vite/client` ou `src/main.tsx` pode ser causada
+por respostas incorretas no servidor/proxy local. Atualize o código e execute
+`npm run dev:full` para servir os módulos diretamente pelo Vite.
 
 ```bash
 npm run test:auth
+npm run test:dev
 npm run build
 ```
 
