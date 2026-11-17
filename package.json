@@ -7,10 +7,14 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "deploy:site": "npm run build && npx firebase-tools deploy --only hosting,firestore:rules --project descomplex-b54c4"
+    "deploy:site": "npm run build && npx netlify-cli deploy --prod",
+    "test:auth": "node --test tests/*.test.mjs",
+    "dev:full": "npx netlify-cli dev"
   },
   "dependencies": {
     "firebase": "^10.8.0",
+    "firebase-admin": "^13.10.0",
+    "google-auth-library": "^10.9.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

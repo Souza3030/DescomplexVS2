@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleAuthProvider, User, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signOut, updateProfile } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
-import { auth, db, firebaseReady } from './firebase';
+import { api, User } from './api';
+import { GoogleLogin } from './GoogleLogin';
 import { categories, percentages, recommendation, Category } from './insights';
 import { dueLabel, formatDate, todayLocal } from './dates';
 import { registerDailyNotifications, removeDeviceToken } from './notifications';
@@ -25,28 +24,18 @@ const questions = [
 ] as const;
 
 function errorText(error: unknown) {
-  const code = (error as { code?: string })?.code;
-  const messages: Record<string, string> = {
-    'auth/invalid-credential': 'E-mail ou senha inválidos.',
-    'auth/email-already-in-use': 'Este e-mail já está cadastrado.',
-    'auth/weak-password': 'Use uma senha com pelo menos 6 caracteres.',
-    'auth/popup-closed-by-user': 'O login com Google foi cancelado.',
-    'permission-denied': 'O Firestore negou o acesso. Confira as regras do projeto.',
-    'unavailable': 'Sem conexão com o Firestore. Tente novamente quando a rede voltar.',
-  };
-  return messages[code || ''] || `Não foi possível concluir a operação${code ? ` (${code})` : ''}.`;
+  return error instanceof Error ? error.message : 'Não foi possível concluir a operação. Tente novamente.';
 }
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [authLoaded, setAuthLoaded] = useState(!firebaseReady);
+  const [authLoaded, setAuthLoaded] = useState(false);
   const [page, setPage] = useState<Page>(() => pageFromPath(window.location.pathname));
   const [tasks, setTasks] = useState<Task[]>([]);
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([]);
   const [message, setMessage] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [register, setRegister] = useState(false);
+  const savedProfileRef = useRef('');
+  const activeUserRef = useRef(user?.uid); activeUserRef.current=user?.uid;
   const [title, setTitle] = useState('');
   const [nextStep, setNextStep] = useState('');
   const [category, setCategory] = useState<Category>('Importante');
@@ -77,25 +66,30 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!auth) return;
-    return onAuthStateChanged(auth, person => { setUser(person); setAuthLoaded(true); setMessage(''); }, error => { setMessage(errorText(error)); setAuthLoaded(true); });
+    let active = true;
+    api<{user:User | null}>('/auth/session').then(({user}) => {if(active)setUser(user);}).catch(error=>{if(active)setMessage(errorText(error));}).finally(()=>{if(active)setAuthLoaded(true);});
+    return()=>{active=false;};
   }, []);
-  useEffect(() => {
-    if (!user || !db) { setTasks([]); setDiagnoses([]); return; }
-    const tasksRef = collection(db, 'users', user.uid, 'tasks');
-    const diagnosesRef = collection(db, 'users', user.uid, 'diagnoses');
-    const profileRef = doc(db, 'profiles', user.uid);
-    const offTasks = onSnapshot(tasksRef, snap => setTasks(snap.docs.map(d => ({ ...d.data(), id: d.id } as Task)).sort((a, b) => b.createdAt - a.createdAt)), e => setMessage(errorText(e)));
-    const offDiagnoses = onSnapshot(diagnosesRef, snap => setDiagnoses(snap.docs.map(d => ({ ...d.data(), id: d.id } as Diagnosis)).sort((a, b) => b.createdAt - a.createdAt)), e => setMessage(errorText(e)));
-    const offProfile = onSnapshot(profileRef, snap => {
-      const saved = snap.data() as Profile | undefined;
-      setProfile(saved || { displayName: user.displayName || '', focusMinutes: 25, notifyEnabled: false, notifyTime: '09:00', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Fortaleza' });
-      setProfileName(saved?.displayName || user.displayName || '');
-      setNotifyTime(saved?.notifyTime || '09:00');
-      if (!runningRef.current) { const minutes = saved?.focusMinutes || 25; setFocusMinutes(minutes); setSeconds(minutes * 60); }
-    }, e => setMessage(errorText(e)));
-    return () => { offTasks(); offDiagnoses(); offProfile(); };
-  }, [user]);
+  async function refreshData() {
+    const data = await api<{tasks:Task[]; diagnoses:Diagnosis[]; profile:Profile | null}>('/data');
+    if(activeUserRef.current!==user?.uid) return;
+    setTasks(data.tasks); setDiagnoses(data.diagnoses);
+    const signature=JSON.stringify(data.profile);
+    if(savedProfileRef.current !== signature) {
+      savedProfileRef.current=signature;
+      const saved=data.profile;
+      setProfile(saved || {displayName:user?.displayName || '',focusMinutes:25,notifyEnabled:false,notifyTime:'09:00',timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Fortaleza'});
+      setProfileName(saved?.displayName || user?.displayName || '');setNotifyTime(saved?.notifyTime || '09:00');
+      if(!runningRef.current) {const minutes=saved?.focusMinutes || 25;setFocusMinutes(minutes);setSeconds(minutes*60);}
+    }
+  }
+  useEffect(()=>{
+    if(!user){setTasks([]);setDiagnoses([]);savedProfileRef.current='';return;}
+    let active=true;
+    const refresh=()=>{if(active && document.visibilityState!=='hidden')refreshData().catch(error=>{if(active)setMessage(errorText(error));});};
+    refresh();const timer=window.setInterval(refresh,30000);window.addEventListener('focus',refresh);
+    return()=>{active=false;clearInterval(timer);window.removeEventListener('focus',refresh);};
+  },[user]);
   useEffect(() => {
     if (!running) return;
     const timer = window.setInterval(() => setSeconds(current => {
@@ -119,77 +113,63 @@ export default function App() {
   const visibleTasks = tasks.filter(t => (taskFilter === 'Todas' || (taskFilter === 'Concluídas' ? t.done : !t.done)) && `${t.title} ${t.nextStep} ${t.category}`.toLocaleLowerCase('pt-BR').includes(taskSearch.toLocaleLowerCase('pt-BR'))).sort((a, b) => taskSort === 'prazo' ? (a.dueDate || '9999').localeCompare(b.dueDate || '9999') : b.createdAt - a.createdAt);
   const focusProgress = Math.min(100, Math.max(0, (1 - seconds / (focusMinutes * 60 || 1)) * 100));
 
-  async function doAuth(event: React.FormEvent) {
-    event.preventDefault(); if (!auth) return;
-    setMessage('');
-    try { await (register ? createUserWithEmailAndPassword(auth, email, password) : signInWithEmailAndPassword(auth, email, password)); }
-    catch (e) { setMessage(errorText(e)); }
-  }
-  async function googleLogin() {
-    if (!auth) return;
-    setMessage('');
-    try { await signInWithPopup(auth, new GoogleAuthProvider()); }
-    catch (e) { setMessage(errorText(e)); }
-  }
   async function addTask(event: React.FormEvent) {
-    event.preventDefault(); if (!db || !user || !title.trim()) return;
+    event.preventDefault(); if (!user || !title.trim()) return;
     if (dueDate && startDate && dueDate < startDate) { setMessage('O prazo deve ser igual ou posterior à data de início.'); return; }
     try {
-      await addDoc(collection(db, 'users', user.uid, 'tasks'), { title: title.trim(), nextStep: nextStep.trim(), category, done: false, createdAt: Date.now(), startDate, dueDate });
+      await api('/tasks','POST',{title:title.trim(),nextStep:nextStep.trim(),category,startDate,dueDate}); await refreshData();
       setTitle(''); setNextStep(''); setDueDate(''); setMessage('Tarefa adicionada.');
     } catch (e) { setMessage(errorText(e)); }
   }
   async function toggleTask(task: Task) {
-    if (!db || !user) return;
-    try { await updateDoc(doc(db, 'users', user.uid, 'tasks', task.id), { done: !task.done }); }
+    if (!user) return;
+    try { await api(`/tasks/${encodeURIComponent(task.id)}`,'PATCH',{done:!task.done}); await refreshData(); }
     catch (e) { setMessage(errorText(e)); }
   }
   async function removeTask(task: Task) {
-    if (!db || !user) return;
-    try { await deleteDoc(doc(db, 'users', user.uid, 'tasks', task.id)); }
+    if (!user) return;
+    try { await api(`/tasks/${encodeURIComponent(task.id)}`,'DELETE'); await refreshData(); }
     catch (e) { setMessage(errorText(e)); }
   }
   async function saveDiagnosis() {
-    if (!db || !user || answers.some(a => a < 1 || a > 5)) { setMessage('Responda às nove afirmações para continuar.'); return; }
+    if (!user || answers.some(a => a < 1 || a > 5)) { setMessage('Responda às nove afirmações para continuar.'); return; }
     try {
-      await addDoc(collection(db, 'users', user.uid, 'diagnoses'), { answers, createdAt: Date.now() });
+      await api('/diagnoses','POST',{answers}); await refreshData();
       setMessage('Diagnóstico salvo com sucesso. Veja sua recomendação abaixo.');
     } catch (e) { setMessage(errorText(e)); }
   }
   async function saveProfile(event: React.FormEvent) {
-    event.preventDefault(); if (!db || !user) return;
+    event.preventDefault(); if (!user) return;
     const name = profileName.trim();
     if (!name) { setMessage('Informe seu nome.'); return; }
     try {
-      await setDoc(doc(db, 'profiles', user.uid), { ...profile, displayName: name, notifyTime, focusMinutes, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || profile.timezone }, { merge: true });
-      await updateProfile(user, { displayName: name });
+      await api('/profile','PATCH',{...profile,displayName:name,notifyTime,focusMinutes,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || profile.timezone}); await refreshData();
       setMessage('Perfil atualizado.');
     } catch (e) { setMessage(errorText(e)); }
   }
   async function enableNotifications() {
-    if (!db || !user) return;
+    if (!user) return;
     try {
       await registerDailyNotifications(user.uid);
-      await setDoc(doc(db, 'profiles', user.uid), { ...profile, displayName: profileName.trim() || user.displayName || 'Usuário', notifyEnabled: true, notifyTime, focusMinutes, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || profile.timezone }, { merge: true });
+      await api('/profile','PATCH',{...profile,displayName:profileName.trim() || user.displayName || 'Usuário',notifyEnabled:true,notifyTime,focusMinutes,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || profile.timezone}); await refreshData();
       setMessage('Notificações diárias ativadas.');
     } catch (e) { setMessage(e instanceof Error ? e.message : errorText(e)); }
   }
   async function disableNotifications() {
-    if (!db || !user) return;
-    try { await setDoc(doc(db, 'profiles', user.uid), { notifyEnabled: false }, { merge: true }); setMessage('Notificações desativadas.'); }
+    if (!user) return;
+    try { await api('/profile','PATCH',{notifyEnabled:false}); await refreshData(); setMessage('Notificações desativadas.'); }
     catch (e) { setMessage(errorText(e)); }
   }
   async function logout() {
-    if (!auth || !user) return;
+    if (!user) return;
     try { await removeDeviceToken(user.uid); }
     catch (error) { setMessage(errorText(error)); }
-    try { await signOut(auth); }
+    try { await api('/auth/logout','POST',{}); window.google?.accounts.id.disableAutoSelect(); setUser(null); setMessage(''); setRunning(false); }
     catch (error) { setMessage(errorText(error)); }
   }
 
-  if (!firebaseReady) return <main className="setup"><img src="/descomplex-wordmark.png" alt="Descomplex" /><h1>Conecte seu projeto Firebase</h1><p>Preencha as variáveis em <code>.env</code> usando <code>.env.example</code> e reinicie o servidor. Depois, habilite autenticação e Firestore no console do Firebase.</p></main>;
-  if (!authLoaded) return <main className="setup">Carregando sua conta…</main>;
-  if (!user) return <main className="auth-page"><div className="auth-card"><img src="/descomplex-wordmark.png" alt="Descomplex" /><span className="eyebrow">UM PASSO DE CADA VEZ</span><h1>Menos adiamento.<br />Mais clareza.</h1><p>Entenda o que faz você procrastinar e transforme intenção em ação.</p><form onSubmit={doAuth}><label>E-mail<input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" /></label><label>Senha<input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} autoComplete={register ? 'new-password' : 'current-password'} /></label><button className="primary" type="submit">{register ? 'Criar conta' : 'Entrar'}</button></form><button className="secondary" onClick={googleLogin}>Continuar com Google</button><button className="text-button" onClick={() => { setRegister(!register); setMessage(''); }}>{register ? 'Já tenho uma conta' : 'Criar uma conta'}</button>{message && <p className="feedback" role="alert">{message}</p>}</div><div className="auth-art"><span>DESCOMPLEX • PROCRASTINAÇÃO</span><h2>Começar pequeno<br />também é começar.</h2><p>Organize o que importa. Descubra seus padrões. Conquiste seu próximo passo.</p><div className="orbit">01 <span>→</span> 02 <span>→</span> 03</div></div></main>;
+  if (!authLoaded) return <main className="setup"><img src="/descomplex-wordmark.png" alt="Descomplex" /><p role="status">Carregando sua conta…</p></main>;
+  if (!user) return <main className="auth-page auth-redesign"><div className="auth-form-side"><div className="auth-card"><img className="auth-logo" src="/descomplex-wordmark.png" alt="Descomplex" /><span className="eyebrow">UM PASSO DE CADA VEZ</span><h1>Que bom ter<br />você por aqui.</h1><p>Entre com sua conta Google e abra espaço para o que importa.</p><GoogleLogin onLogin={person=>{setUser(person);setMessage('');}} />{message && <div className="feedback" role="alert">{message}</div>}<div className="google-login-note"><span className="summary-icon"><NavIcon index={4} /></span><p><strong>Seu espaço, com a sua conta.</strong>Seu espaço fica pronto na primeira entrada. Sem precisar de uma nova senha.</p></div><p className="auth-note">Gestão do tempo. Liberdade para viver.</p></div></div><aside className="auth-art auth-photo-panel"><img className="auth-photo" src="/images/login-workspace.jpg" alt="Espaço de trabalho com notebook, plantas e luz natural" fetchPriority="high" /><div className="auth-photo-top"><span className="auth-photo-pill">MENOS PRESSA. MAIS INTENÇÃO.</span><span aria-hidden="true">✦</span></div><div className="auth-photo-copy"><span className="eyebrow">UM NOVO JEITO DE COMEÇAR</span><h2>O que importa<br />merece espaço.</h2><p>Entenda seus padrões, organize seus próximos passos e encontre o seu ritmo.</p><div className="auth-photo-tags"><span>Clareza</span><span>Intenção</span><span>Movimento</span></div></div><div className="auth-photo-bottom"><span>PROGRESSO, NÃO PERFEIÇÃO</span><span>01 — 03</span></div></aside></main>;
 
   return <div className="shell"><aside className="sidebar"><img src="/descomplex-wordmark.png" alt="Descomplex" /><p className="side-caption">SEU ESPAÇO DE AÇÃO</p><nav aria-label="Navegação principal">{(['Visão geral', 'Minhas tarefas', 'Diagnóstico', 'Foco', 'Perfil'] as Page[]).map((item, index) => <button key={item} className={page === item ? 'active' : ''} aria-current={page === item ? 'page' : undefined} onClick={() => { navigate(item); setMessage(''); }}><span className="nav-icon" aria-hidden="true">{<NavIcon index={index} />}</span>{item}</button>)}</nav><div className="side-bottom"><button className="avatar" onClick={() => navigate('Perfil')} aria-label="Editar perfil">{(profile.displayName || user.email || 'U')[0].toUpperCase()}</button><button className="account account-button" onClick={() => navigate('Perfil')}><strong>{profile.displayName || 'Meu perfil'}</strong><small>{user.email || 'Conta Google'}</small></button><button className="logout" onClick={logout} title="Sair" aria-label="Sair">↗</button></div></aside><main className="content"><header className="topbar"><div><span className="eyebrow">DESCOMPLEX / {page.toUpperCase()}</span><h1>{page === 'Visão geral' ? 'Bom te ver por aqui.' : page}</h1></div><div className="date-chip">{new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'long' }).format(new Date())}</div></header>{message && <div className="feedback" role="status">{message}<button onClick={() => setMessage('')} aria-label="Fechar aviso">×</button></div>}
     {page === 'Visão geral' && <><section className="hero"><img className="hero-photo" src="/images/focus-workspace.jpg" alt="Mesa de trabalho iluminada com notebook e plantas" fetchPriority="high" /><div className="hero-copy"><span className="eyebrow">PROGRESSO, NÃO PERFEIÇÃO</span><h2>O próximo passo<br />começa agora.</h2><p>Quando você entende por que adia, fica mais fácil agir com intenção.</p><button className="light-button" onClick={() => navigate('Minhas tarefas')}>Organizar minhas tarefas <span aria-hidden="true">→</span></button></div></section><section className="stats"><article><span>Tarefas em aberto</span><strong>{open.length.toString().padStart(2, '0')}</strong><small>Um passo de cada vez</small></article><article><span>Concluídas</span><strong>{completed.toString().padStart(2, '0')}</strong><small>Seu progresso conta</small></article><article><span>Último diagnóstico</span><strong>{latest ? `${scores[categories.findIndex((_, i) => scores[i] === Math.max(...scores))]}%` : '—'}</strong><small>{latest ? 'Maior dimensão' : 'Ainda não realizado'}</small></article></section><div className="grid-two"><section className="panel"><div className="panel-heading"><div><span className="eyebrow">EM MOVIMENTO</span><h2>Próximas ações</h2></div><button className="link-button" onClick={() => navigate('Minhas tarefas')}>Ver todas →</button></div>{open.length ? open.slice(0, 3).map(t => <div className="compact-task" key={t.id}><button className="check" onClick={() => toggleTask(t)} aria-label={`Concluir ${t.title}`} /> <div><strong>{t.title}</strong><small>{t.nextStep || 'Defina um primeiro passo'}</small></div><span className={`tag ${t.category.toLowerCase()}`}>{t.category}</span></div>) : <Empty title="Tudo em aberto começa com uma decisão." text="Adicione sua primeira tarefa e defina um passo simples." />}</section><section className="panel insight diagnosis-preview"><img className="diagnosis-photo" src="/images/diagnosis-workspace.jpg" alt="" loading="lazy" /><div className="diagnosis-copy"><span className="eyebrow">CONHEÇA SEU PADRÃO</span><h2>Por que você adia?</h2><p>Responda nove afirmações rápidas para descobrir quais situações mais favorecem a procrastinação.</p>{latest && <div className="mini-scores">{categories.map((c, i) => <span key={c}>{c} <b>{scores[i]}%</b></span>)}</div>}<button className="primary" onClick={() => navigate('Diagnóstico')}>{latest ? 'Refazer diagnóstico' : 'Fazer diagnóstico'} <span aria-hidden="true">→</span></button></div></section></div></>}

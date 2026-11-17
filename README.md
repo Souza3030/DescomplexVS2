@@ -1,76 +1,131 @@
-# Descomplex — Procrastinação
+# DescomplexVS2
 
-Aplicação React, TypeScript e Firebase para entender padrões de procrastinação e converter tarefas em primeiros passos concretos. O código-fonte está em `src/`. O arquivo `descomplex-mvp-corrigido.zip` contém esta mesma versão, com código-fonte, função de notificações e build gerado.
+Aplicação React/TypeScript para transformar intenções em próximos passos:
+tarefas, diagnóstico da Tríade do Tempo, sessões de foco, perfil e lembretes.
+O login usa **Google Identity Services diretamente**, sem Firebase Authentication.
+O Firestore continua armazenando os dados, acessível apenas pelo backend.
 
-## Executar
+## Configurar o login Google no Netlify
 
-1. Use Node.js 22. Execute `npm ci` na raiz e `npm ci` em `functions/`.
-2. Copie `.env.example` para `.env` e preencha os valores da configuração Web do **seu** projeto Firebase. Esses identificadores Web não são senhas; não inclua chaves administrativas.
-3. No Firebase Console, habilite **Authentication** com e-mail/senha e, se desejar, Google. Adicione o domínio do aplicativo à lista de domínios autorizados.
-4. Crie o **Cloud Firestore**. Para notificações diárias, ative **Cloud Messaging**, gere uma chave Web Push (VAPID) e preencha `VITE_FIREBASE_VAPID_KEY`. O navegador precisa de HTTPS ou `localhost` e o usuário deve autorizar notificações. A função agendada usa Cloud Functions e Cloud Scheduler, que podem exigir faturamento no Firebase.
-5. Revise as regras e publique a hospedagem. Primeiro execute `npx firebase-tools login` e confirme que `descomplex-b54c4` aparece em `npx firebase-tools projects:list`. Depois rode `npm run deploy:site`. Esse comando publica Hosting e regras do Firestore no plano Spark; a função de notificações não é publicada. Para publicá-la, o projeto precisa do plano Blaze e então você pode rodar `npx firebase-tools deploy --only functions --project descomplex-b54c4`. A conta Google usada no login precisa ter permissão de publicação no projeto. A configuração de Hosting inclui as rotas `/tarefas`, `/diagnostico`, `/foco` e `/perfil`.
-6. Execute `npm run dev`. Para conferir as compilações, execute `npm run build` na raiz e `npm --prefix functions run build`.
+1. Em [Google Cloud → Clientes OAuth](https://console.cloud.google.com/auth/clients),
+   configure a tela de consentimento e crie um cliente OAuth do tipo **Aplicativo da Web**.
+   Use o projeto correspondente ao seu aplicativo. Se o aplicativo estiver em teste,
+   adicione as contas que poderão entrar como usuários de teste.
+2. Em **Origens JavaScript autorizadas**, adicione a origem exata do Netlify,
+   por exemplo `https://seu-site.netlify.app`, seu domínio próprio e, para desenvolvimento,
+   `http://localhost:8888`. Não inclua caminhos. O fluxo com botão JavaScript não exige
+   URI de redirecionamento. O ID termina em `.apps.googleusercontent.com`.
+   Não é necessário habilitar Gmail API nem usar a chave da API do Firebase para entrar.
+3. Crie uma conta de serviço dedicada no projeto Firestore `descomplex-b54c4`, com
+   acesso aos dados (papel `Cloud Datastore User`). Gere seu JSON no Google Cloud.
+   Esse JSON é privado: cadastre-o diretamente no Netlify e nunca no código ou no chat.
+4. Em **Netlify → Environment variables**, configure as variáveis abaixo para
+   **Functions**, no contexto de produção. Não use prefixo `VITE_` para segredos.
 
-Sem a configuração Firebase, o aplicativo mostra uma tela de configuração. As tarefas e os diagnósticos são gravados em `users/{uid}/tasks` e `users/{uid}/diagnoses`. A sessão de foco usa um temporizador local.
+| Variável | Valor |
+| --- | --- |
+| `GOOGLE_CLIENT_ID` | ID do cliente OAuth Web do passo 2 |
+| `SESSION_SECRET` | Segredo aleatório com no mínimo 32 caracteres |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Conteúdo completo do JSON da conta de serviço |
+| `LEGACY_FIREBASE_UID_BY_GOOGLE_SUB` | Opcional: mapeamento para recuperar os dados de contas antigas, explicado abaixo |
+| `VITE_FIREBASE_VAPID_KEY` | Opcional: chave Web Push para notificações; escopo Builds |
 
-### Se você baixou o ZIP no Windows
+Para gerar `SESSION_SECRET` localmente, execute e copie o resultado para o Netlify:
 
-Abra o PowerShell na pasta extraída que contém `package.json` e execute:
-
-```powershell
-npm ci
-npm --prefix functions ci
-npm run build
-npx firebase-tools login
-npx firebase-tools projects:list
-npm run deploy:site
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-O ZIP extraído não contém `.git`: `git add`, `git commit` e `git push` só funcionam em um clone feito com `git clone`. As alterações do projeto já estão no repositório; você não precisa enviar o ZIP de volta. O `.env` local não é enviado ao GitHub. Avisos de `npm audit` e de tamanho do bundle não impedem a publicação, mas devem ser avaliados separadamente antes de atualizar dependências.
+5. Conecte o repositório à branch `main` e faça um novo deploy. `netlify.toml`
+   configura build `npm run build`, saída `dist`, Functions e rotas React/API.
+   **É necessário publicar as Functions**, não apenas enviar a pasta `dist`.
+   Firebase Hosting estático, `npm run preview` e `npm run dev` sozinhos não executam a API.
 
-## Como usar
+As antigas variáveis de autenticação `VITE_FIREBASE_*` e os provedores habilitados
+em Firebase Authentication não controlam mais o login desta versão.
+`src/firebase-config.json` possui apenas identificadores públicos usados pelo Cloud
+Messaging. Credenciais de servidor nunca são incluídas no bundle do navegador.
 
-- **Visão geral:** acompanha tarefas abertas e concluídas e o último diagnóstico.
-- **Minhas tarefas:** registra, conclui, reabre ou exclui tarefas; o campo “primeiro passo” ajuda a começar. Cada tarefa tem data de início e prazo. Tarefas antigas permanecem visíveis sem essas datas.
-- **Diagnóstico:** nove afirmações, três para cada dimensão da Tríade do Tempo (Urgente, Importante e Circunstancial). A escala vai de 1 (nunca) a 5 (sempre). Cada resposta compõe apenas a própria dimensão. O subtotal dividido pela soma dos subtotais produz a participação relativa, arredondada pelo método dos maiores restos para somar 100%. A resposta de maior frequência gera uma recomendação prática. O resultado não é uma avaliação clínica.
-- **Foco:** sessão ajustável de 5 a 120 minutos, com pausa e reinício.
-- **Perfil:** altera nome, duração padrão do foco e horário de notificação. Após ativação, uma função agendada verifica o fuso horário do perfil a cada 15 minutos e envia no máximo um lembrete por dia pelo Firebase Cloud Messaging. A entrega depende da permissão do navegador, de um token FCM válido e da função publicada.
+## Desenvolver e validar
 
-## Limites de validação
+Use Node.js 22 ou superior. Copie `.env.example` para `.env` e preencha as variáveis
+localmente (o arquivo é ignorado pelo Git). Depois execute:
 
-`npm run build` valida o código e a geração dos arquivos estáticos. Para verificar login, sincronização, regras de acesso e entrega das notificações, é necessário configurar e publicar em um projeto Firebase. Nenhuma configuração de projeto veio com o ZIP original.
+```bash
+npm ci
+npm run dev:full
+```
 
-## DescomplexVS2 — redesign
+Abra `http://localhost:8888`. O comando usa Netlify CLI para servir Vite e Functions.
+O domínio local também precisa estar autorizado no cliente OAuth Google.
 
-Esta versão usa o Descomplex como base e preserva autenticação, Firestore, tarefas,
-diagnóstico, foco, perfil e notificações. O painel recebeu um banner fotográfico,
-cartões claros, imagem discreta no diagnóstico e ajustes para desktop e celular.
-Os totais e percentuais continuam vindo da conta autenticada.
+```bash
+npm run test:auth
+npm run build
+```
 
-As fotos ficam em `public/images/`, são servidas pelo próprio app e usam uma
-sobreposição para manter os textos legíveis. Fontes das fotos (Unsplash):
+Os testes de backend cobrem assinatura/expiração de sessões, nonce, audiência,
+emissor e e-mail verificado do Google, bloqueio de acesso sem sessão, isolamento
+por usuário, proteção de origem, validação dos dados e migração de UID.
+Os testes de interface com Google/API simulados cobrem o login, tarefas,
+diagnóstico, perfil e layouts em desktop, tablet e celular.
+O login real e a gravação em produção exigem configurar OAuth e conta de serviço.
 
-- Banner: https://images.unsplash.com/photo-1499951360447-b19be8fe80f5
+## Como a autenticação funciona
+
+O botão oficial recebe um ID token Google. O servidor verifica sua assinatura,
+audiência, emissor, validade, e-mail verificado e nonce. Em seguida emite uma sessão
+assinada com prazo de sete dias, em cookie `HttpOnly`, `SameSite=Lax` e `Secure`
+em HTTPS. O navegador não armazena tokens no `localStorage`.
+
+As rotas de dados derivam o UID da sessão validada; o cliente não pode escolher
+outro usuário. O backend aplica validação dos dados porque o SDK Admin do Firestore
+não usa as regras do cliente. As regras existentes não foram abertas.
+Tarefas e resultados são atualizados após cada alteração, ao voltar à janela e a
+cada 30 segundos com o app visível.
+
+## Recuperar dados de contas antigas
+
+O identificador Google (`sub`) difere do UID que o Firebase Authentication gerava.
+Os dados existentes **não são apagados nem movidos automaticamente**. Antes de
+liberar uma conta antiga, configure no servidor um JSON como:
+
+```json
+{"GOOGLE_SUB_DA_CONTA": "UID_ANTIGO_DO_FIREBASE"}
+```
+
+Cadastre esse JSON em `LEGACY_FIREBASE_UID_BY_GOOGLE_SUB` no Netlify. O mapeamento
+é definido pelo administrador, nunca por informações enviadas pelo visitante.
+Para usuários que já entravam com Google no Firebase, `providerUserInfo` de uma
+exportação administrativa de usuários contém o identificador Google e o UID antigo.
+Contas antigas de e-mail/senha exigem verificar a titularidade antes de associar.
+Sem mapeamento, contas Google novas usam `google_<sub>` e começam com dados vazios.
+As coleções continuam sendo `users/{uid}/tasks`, `users/{uid}/diagnoses` e `profiles/{uid}`.
+
+## Notificações
+
+Cloud Messaging continua registrando os tokens pelo backend autenticado.
+A função agendada em `functions/` continua responsável pelos lembretes diários,
+com o mesmo UID do perfil. Ela precisa estar publicada no Firebase e pode exigir
+plano Blaze. Para publicá-la separadamente:
+
+```bash
+npm --prefix functions ci
+npx firebase-tools deploy --only functions --project descomplex-b54c4
+```
+
+## Interface e imagens
+
+Layout responsivo, banner fotográfico, diagnóstico com imagem discreta, sessão de
+foco com natureza e progresso circular, perfil com preferências e exemplo visual
+de lembrete, tarefas com busca, filtros, indicadores e ordenação.
+
+Fotos locais obtidas do Unsplash:
+
+- Painel/login: https://images.unsplash.com/photo-1499951360447-b19be8fe80f5
 - Diagnóstico: https://images.unsplash.com/photo-1497215728101-856f4ea42174
-
-Para executar, configure as variáveis de `.env.example`, instale com `npm ci` e
-rode `npm run dev`. O build de produção é validado com `npm run build`.
-A configuração Firebase herdada da base deve ser conferida antes de um deploy.
-
-### Telas de foco, perfil e tarefas
-
-- Foco: painel fotográfico, progresso circular, atalhos de 15/25/50 minutos e
-  controles de duração, início, pausa e reinício.
-- Perfil: faixa com imagem, resumo da conta, preferências agrupadas e exemplo
-  visual de lembrete com o horário salvo. A prévia é ilustrativa.
-- Tarefas: indicadores reais de abertas, concluídas e atrasadas, progresso,
-  busca por texto, filtros de estado e ordenação por prazo ou criação.
-
-Fotos adicionais (Unsplash):
-
 - Foco: https://images.unsplash.com/photo-1441974231531-c6227db76b6e
 - Perfil: https://images.unsplash.com/photo-1497366754035-f200968a6e72
 
-Validação visual com dados simulados em 1672, 1024 e 390 px: navegação, imagens,
-filtros, busca, ordenação, foco no formulário e controles do temporizador.
-O teste de gravação no Firebase requer as variáveis de ambiente e uma conta real.
+O ZIP antigo no repositório é um artefato legado e não corresponde à versão atual.
+Use os arquivos da branch `main`.
